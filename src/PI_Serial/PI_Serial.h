@@ -4,6 +4,9 @@
 #include "vector"
 #include <ArduinoJson.h>
 #include <modbus/modbus.h>
+
+#include <Arduino.h>
+
 extern JsonObject deviceJson;
 extern JsonObject staticData;
 extern JsonObject liveData;

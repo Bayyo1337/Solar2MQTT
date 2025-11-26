@@ -223,64 +223,117 @@ bool PI_Serial::sendCustomCommand()
     return true;
 }
 
+
+
 String PI_Serial::requestData(String command)
 {
-
     String commandBuffer = "";
     uint16_t crcCalc = 0;
     uint16_t crcRecive = 0;
 
+    // 0. Flush RX buffer to remove old garbage
+    while (this->my_serialIntf->available()) {
+        this->my_serialIntf->read();
+    }
+
+    // 1. Send Command
     this->my_serialIntf->write(command.c_str());
     this->my_serialIntf->write(highByte(getCRC(command)));
     this->my_serialIntf->write(lowByte(getCRC(command)));
     this->my_serialIntf->write(0x0D);
     this->my_serialIntf->flush();
 
-    // for testing
+    // 2. Receive Data (Raw Read Loop)
     this->my_serialIntf->enableTx(true);
-    delay(20);
-    commandBuffer = this->my_serialIntf->readStringUntil('\r');
+    delay(50); 
+
+    String rawData = "";
+    unsigned long startTime = millis();
+    
+    // Wait up to 1.5 seconds for long QPIRI responses
+    while (millis() - startTime < 1500) 
+    {
+        if (this->my_serialIntf->available())
+        {
+            char c = this->my_serialIntf->read();
+            
+            // Collect EVERY byte, including Nulls (0x00)
+            rawData += c;
+            
+            // Stop if we hit the terminator (Carriage Return)
+            if (c == 0x0D) {
+                break;
+            }
+            startTime = millis(); // Reset timeout
+        }
+        yield();
+    }
+    
+    // Remove the trailing \r
+    if (rawData.length() > 0 && rawData[rawData.length() - 1] == 0x0D) {
+        rawData.remove(rawData.length() - 1);
+    }
+    
     this->my_serialIntf->enableTx(false);
+    commandBuffer = rawData;
 
-    if (getCRC(commandBuffer.substring(0, commandBuffer.length() - 2)) == 256U * (uint8_t)commandBuffer[commandBuffer.length() - 2] + (uint8_t)commandBuffer[commandBuffer.length() - 1] &&
-        getCRC(commandBuffer.substring(0, commandBuffer.length() - 2)) != 0 && 256U * (uint8_t)commandBuffer[commandBuffer.length() - 2] + (uint8_t)commandBuffer[commandBuffer.length() - 1] != 0)
+    // 3. Validation
+    if (commandBuffer.length() > 2) 
     {
-        crcCalc = 256U * (uint8_t)commandBuffer[commandBuffer.length() - 2] + (uint8_t)commandBuffer[commandBuffer.length() - 1];
-        crcRecive = getCRC(commandBuffer.substring(0, commandBuffer.length() - 2));
-        commandBuffer.remove(commandBuffer.length() - 2); // remove the crc
-        commandBuffer.remove(0, strlen(startChar));       // remove the start char ( for Pi30 and ^Dxxx for Pi18
+        // Extract Data and CRC
+        String dataPayload = commandBuffer.substring(0, commandBuffer.length() - 2);
+        
+        uint8_t crcHigh = (uint8_t)commandBuffer[commandBuffer.length() - 2];
+        uint8_t crcLow  = (uint8_t)commandBuffer[commandBuffer.length() - 1];
+        uint16_t crcReceivedVal = (uint16_t)crcHigh * 256 + crcLow;
+        
+        // Check CRC on the RAW data (with Nulls)
+        if (getCRC(dataPayload) == crcReceivedVal)
+        {
+            // CRC Passed! Now clean the data for the parser.
+            
+            // Remove CRC bytes
+            commandBuffer.remove(commandBuffer.length() - 2); 
+            
+            // Remove Start Char
+            if (commandBuffer.startsWith(startChar)) {
+                 commandBuffer.remove(0, strlen(startChar));
+            }
 
-        // requestOK++;
-        connectionCounter = 0;
-    }
-    else if (getCHK(commandBuffer.substring(0, commandBuffer.length() - 1)) + 1 == commandBuffer[commandBuffer.length() - 1] &&
-             getCHK(commandBuffer.substring(0, commandBuffer.length() - 1)) + 1 != 0 && commandBuffer[commandBuffer.length() - 1] != 0 &&
-             command == "QALL" // crude fix for the qall chk thing
-             )                 // CHK for QALL
-    {
-        crcCalc = getCHK(commandBuffer.substring(0, commandBuffer.length() - 1)) + 1;
-        crcRecive = commandBuffer[commandBuffer.length() - 1];
-        commandBuffer.remove(commandBuffer.length() - 1); // remove the crc
-        commandBuffer.remove(0, strlen(startChar));       // remove the start char ( for Pi30 and ^Dxxx for Pi18
+            // --- IMPORTANT: NOW remove Null Bytes so the parser works ---
+            String cleanBuffer = "";
+            for (unsigned int i = 0; i < commandBuffer.length(); i++) {
+                if (commandBuffer[i] != 0x00) {
+                    cleanBuffer += commandBuffer[i];
+                }
+            }
+            commandBuffer = cleanBuffer;
+            // ------------------------------------------------------------
 
-        // requestOK++;
-        connectionCounter = 0;
-    }
-    else if (commandBuffer.indexOf("NAK", strlen(startChar)) > 0) // catch NAK without crc
-    {
-        commandBuffer = "NAK";
-    }
-    else if (commandBuffer == "") // catch empty answer, its similar to NAK
-    {
-        commandBuffer = "NAK";
+            connectionCounter = 0;
+        }
+        else if (commandBuffer.indexOf("NAK") >= 0)
+        {
+            commandBuffer = "NAK";
+        }
+        else 
+        {
+            // Log mismatch to help debug
+            writeLog("ERROR CRC: >%s< (Len: %d, Calc: %04X, Rec: %04X)", 
+                     command.c_str(), 
+                     commandBuffer.length(),
+                     getCRC(dataPayload), 
+                     crcReceivedVal);
+            connectionCounter++;
+            commandBuffer = "ERCRC";
+        }
     }
     else
     {
-        writeLog("ERROR Send: >%s< Recive: >%s<", command, commandBuffer);
-        connectionCounter++;
-        commandBuffer = "ERCRC";
+        commandBuffer = "NAK";
     }
-    writeLog("[C: %5S][CR: %4X][CC: %4X][L: %3u]", (const wchar_t *)command.c_str(), crcRecive, crcCalc, commandBuffer.length());
+
+    writeLog("[C: %s][L: %u]", command.c_str(), commandBuffer.length());
     return commandBuffer;
 }
 

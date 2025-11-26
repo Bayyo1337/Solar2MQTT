@@ -96,6 +96,7 @@ bool PI_Serial::PIXX_QPIRI()
   if (protocol == PI30)
   {
     String commandAnswer = this->requestData("QPIRI");
+    //Serial.printf("Full QPIRI Response: %s\n", commandAnswer.c_str());
     get.raw.qpiri = commandAnswer;
     // calculate the length with https://elmar-eigner.de/text-zeichen-laenge.html
     if (commandAnswer == "NAK")

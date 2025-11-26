@@ -1,3 +1,7 @@
+#include <Arduino.h>
+//#include <ctype.h>
+
+
 static const char *const qpigsList[][24] = {
     // [PI34 / MPPT-3000], [PI30 HS MS MSX], [PI30 Revo], [PI30 PIP], [PI41 / LV5048]
     {
@@ -118,7 +122,21 @@ bool PI_Serial::PIXX_QPIGS()
     //  return false;
     //}
     //
+
     String commandAnswerQPIGS = this->requestData("QPIGS");
+
+
+    //debug output to analyze the response
+    //needs #include <ctype.h> at the top of this file
+    //Serial.println("\n--- Analyzing QPIGS Response ---");
+    //Serial.printf("Reported length: %d\n", commandAnswerQPIGS.length());
+    //for (int i = 0; i < commandAnswerQPIGS.length(); i++) {
+    //    char c = commandAnswerQPIGS.charAt(i);
+    //    Serial.printf("[%d] char: '%c' dec: %d hex: %02X\n", i, (isprint(c) ? c : '.'), c, c);
+    //}
+    //Serial.println("--- End of Analysis ---");
+
+
     get.raw.qpigs = commandAnswerQPIGS;
     if (commandAnswerQPIGS == "NAK")
       return true;
@@ -162,8 +180,11 @@ bool PI_Serial::PIXX_QPIGS()
           liveData[qpigsList[protocolNum][i]] = (int)(strs[i].toFloat() * 100 + 0.5) / 100.0;
       }
       // make some things pretty
-      liveData["Battery_Load"] = (liveData["Battery_Charge_Current"].as<unsigned short>() - liveData["Battery_Discharge_Current"].as<unsigned short>());
-      liveData["PV_Input_Power"] = (liveData["PV_Input_Voltage"].as<unsigned short>() * liveData["PV_Input_Current"].as<unsigned short>());
+      //liveData["Battery_Load"] = (liveData["Battery_Charge_Current"].as<unsigned short>() - liveData["Battery_Discharge_Current"].as<unsigned short>());
+      //liveData["PV_Input_Power"] = (liveData["PV_Input_Voltage"].as<unsigned short>() * liveData["PV_Input_Current"].as<unsigned short>());
+      // Use float to prevent 0.6A becoming 0 (and make it prettier :D )
+      liveData["PV_Input_Power"] = (liveData["PV_Input_Voltage"].as<float>() * liveData["PV_Input_Current"].as<float>());
+      liveData["Battery_Load"] = (liveData["Battery_Charge_Current"].as<float>() - liveData["Battery_Discharge_Current"].as<float>());
     }
 
     if (get.raw.qall.length() > 10 /*get.raw.qall != "NAK" || get.raw.qall != "ERCRC" || get.raw.qall != ""*/)
