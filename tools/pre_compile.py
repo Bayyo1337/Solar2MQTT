@@ -5,7 +5,10 @@ env.Append(CPPDEFINES=[
     ("HWBOARD", env.StringifyMacro(env["PIOENV"])),
 ])
 
-if env.GetProjectOption("custom_hardwareserial") == "true":
+# Use GetProjectOption with a default value to avoid errors if the option is missing
+custom_hardwareserial = env.GetProjectOption("custom_hardwareserial", default="false")
+
+if custom_hardwareserial == "true":
     env.Append(CPPDEFINES=[
         ("isUART_HARDWARE",  env.StringifyMacro(env.GetBuildType())),
     ])

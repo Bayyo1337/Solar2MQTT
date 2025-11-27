@@ -7,18 +7,33 @@ https://github.com/softwarecrash/Solar2MQTT
 #include "main.h"
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#ifdef ESP8266
 #include <ESP8266mDNS.h>
-#include <ESPAsyncWiFiManager.h>
 #include <ESPAsyncTCP.h>
+#else
+#include <ESPmDNS.h>
+#include <AsyncTCP.h>
+#include <Update.h>
+#endif
+#include <ESPAsyncWiFiManager.h>
 #include <ESPAsyncWebServer.h>
 #include "Settings.h"
 #include "html.h"
 #include "htmlProzessor.h"
 #include "PI_Serial/PI_Serial.h"
+#include "LoraHandler.h"
 
 #ifdef TEMPSENS_PIN
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#endif
+
+// If we are on ESP32, we likely use different pins for inverter, but let's stick to default define unless overridden
+#ifndef INVERTER_RX
+#define INVERTER_RX 13
+#endif
+#ifndef INVERTER_TX
+#define INVERTER_TX 17
 #endif
 
 PI_Serial mppClient(INVERTER_RX, INVERTER_TX);
@@ -29,6 +44,11 @@ AsyncWebSocket ws("/ws");
 AsyncWebSocketClient *wsClient;
 DNSServer dns;
 Settings settings;
+
+#ifdef LORA_ENABLED
+LoraHandler loraHandler;
+unsigned long loraSendTimer = 0;
+#endif
 
 #ifdef TEMPSENS_PIN
 OneWire oneWire(TEMPSENS_PIN);
@@ -41,7 +61,10 @@ uint8_t numOfTempSens;
 
 // new importetd
 char mqttClientId[80];
+
+#ifdef ESP8266
 ADC_MODE(ADC_VCC);
+#endif
 
 // flag for saving data
 unsigned long mqtttimer = 0;
@@ -72,11 +95,16 @@ void saveConfigCallback()
   shouldSaveConfig = true;
 }
 
+// Helper for V7 transition
+size_t getJsonSize(const JsonVariant& doc) {
+    return serializeJson(doc, (char*)NULL, 0);
+}
+
 void notifyClients()
 {
   if (wsClient != nullptr && wsClient->canSend())
   {
-    size_t len = measureJson(liveData);
+    size_t len = getJsonSize(liveData);
     AsyncWebSocketMessageBuffer *buffer = ws.makeBuffer(len);
     if (buffer)
     {
@@ -134,7 +162,7 @@ void recvMsg(uint8_t *data, size_t len)
 
 bool resetCounter(bool count)
 {
-
+#ifdef ESP8266
   if (count)
   {
     if (ESP.getResetInfoPtr()->reason == 6)
@@ -165,6 +193,7 @@ bool resetCounter(bool count)
     ESP.rtcUserMemoryWrite(16, &bootcount, sizeof(bootcount));
   }
   writeLog("Bootcount:%d Reboot reason:%d", bootcount, ESP.getResetInfoPtr()->reason);
+#endif
   return true;
 }
 
@@ -184,11 +213,17 @@ void setup()
   WiFi.persistent(true); // fix wifi save bug
   WiFi.hostname(settings.data.deviceName);
   AsyncWiFiManager wm(&server, &dns);
+
+#ifdef ESP8266
   sprintf(mqttClientId, "%s-%06X", settings.data.deviceName, ESP.getChipId());
+#else
+  uint64_t chipid = ESP.getEfuseMac();
+  sprintf(mqttClientId, "%s-%04X%08X", settings.data.deviceName, (uint16_t)(chipid >> 32), (uint32_t)chipid);
+#endif
 
   wm.setMinimumSignalQuality(20); // filter weak wifi signals
   // wm.setConnectTimeout(15);       // how long to try to connect for before continuing
-  // wm.setConfigPortalTimeout(120); // auto close configportal after n seconds
+  wm.setConfigPortalTimeout(180); // auto close configportal after n seconds (3 mins)
   wm.setSaveConfigCallback(saveConfigCallback);
 /*
   DEBUG_PRINTLN();
@@ -232,6 +267,13 @@ void setup()
   AsyncWiFiManagerParameter custom_mqtt_refresh("mqtt_refresh", "MQTT Send Interval", "300", 4);
   AsyncWiFiManagerParameter custom_device_name("device_name", "Device Name", "Solar2MQTT", 40);
 
+#ifdef LORA_ENABLED
+  char loraModeStr[2];
+  sprintf(loraModeStr, "%d", settings.data.loraMode);
+  AsyncWiFiManagerParameter custom_lora_mode("lora_mode", "LoRa Mode (0=Off, 1=Sender, 2=Receiver)", loraModeStr, 2);
+  wm.addParameter(&custom_lora_mode);
+#endif
+
   wm.addParameter(&custom_mqtt_server);
   wm.addParameter(&custom_mqtt_user);
   wm.addParameter(&custom_mqtt_pass);
@@ -247,6 +289,23 @@ void setup()
   wm.setSaveConfigCallback(saveConfigCallback);
   // save settings if wifi setup is fire up
   bool apRunning = wm.autoConnect("Solar2MQTT-AP");
+  if (!apRunning) {
+      writeLog("WiFi Connect Failed!");
+      // If we are a LoRa Sender, we want to continue running even without WiFi
+      // Otherwise, we restart to try again.
+#ifdef LORA_ENABLED
+      if (settings.data.loraMode != 1) { // 1 = Sender
+          ESP.restart();
+      } else {
+          writeLog("Continuing in LoRa Sender Mode without WiFi...");
+          workerCanRun = true;
+          // We might not have 'server' running, but loop handles logic
+      }
+#else
+      ESP.restart();
+#endif
+  }
+
   if (shouldSaveConfig)
   {
     strncpy(settings.data.mqttServer, custom_mqtt_server.getValue(), 40);
@@ -256,6 +315,9 @@ void setup()
     strncpy(settings.data.deviceName, custom_device_name.getValue(), 40);
     strncpy(settings.data.mqttTopic, custom_mqtt_topic.getValue(), 40);
     settings.data.mqttRefresh = atoi(custom_mqtt_refresh.getValue());
+#ifdef LORA_ENABLED
+    settings.data.loraMode = atoi(custom_lora_mode.getValue());
+#endif
     settings.save();
     ESP.restart();
   }
@@ -302,7 +364,11 @@ void setup()
                 request->send(response);
                 delay(1000);
                 settings.reset();
+#ifdef ESP8266
                 ESP.eraseConfig();
+#else
+                // ESP32 doesn't have eraseConfig(), settings are in EEPROM/NVS which we reset above
+#endif
                 ESP.restart(); });
 
     server.on("/settingsedit", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -333,6 +399,9 @@ void setup()
                 strncpy(settings.data.httpUser, request->arg("post_httpUser").c_str(), 40);
                 strncpy(settings.data.httpPass, request->arg("post_httpPass").c_str(), 40);
                 settings.data.haDiscovery = (request->arg("post_hadiscovery") == "true") ? true : false;
+#ifdef LORA_ENABLED
+                settings.data.loraMode = request->arg("post_loramode").toInt();
+#endif
                 settings.save();
                 request->redirect("/reboot"); });
 
@@ -380,7 +449,9 @@ void setup()
             { // start with max available size
               Update.printError(Serial);
             }
+#ifdef ESP8266
             Update.runAsync(true); // tell the updaterClass to run in async mode
+#endif
           }
 
           // Write chunked data to the free sketch space
@@ -417,6 +488,11 @@ void setup()
 
     server.begin();
 
+#ifdef LORA_ENABLED
+    loraHandler.begin(); // Setup LoRa
+    loraHandler.setMode((LoraHandler::LoraMode)settings.data.loraMode);
+#endif
+
     mppClient.callback(prozessData);
     mppClient.Init(); // init the PI_serial Library
 
@@ -446,7 +522,9 @@ void setup()
 
 void loop()
 {
+#ifdef ESP8266
   MDNS.update();
+#endif
   if (Update.isRunning())
   {
     workerCanRun = false; // lockout, atfer true need reboot
@@ -463,17 +541,47 @@ void loop()
         mqtttimer = 0;
       }
       ws.cleanupClients(); // clean unused client connections
+
+#ifdef LORA_ENABLED
+      loraHandler.loop();
+      // If we are just a receiver, we don't need to poll the inverter.
+      // But let's leave it possible for a device to be BOTH if connected (hybrid).
+      // However, usually receiver is standalone.
+      if (loraHandler.getMode() != LoraHandler::MODE_RECEIVER) {
+           mppClient.loop(); // Call the PI Serial Library loop
+      }
+#else
       mppClient.loop(); // Call the PI Serial Library loop
+#endif
+
       mqttclient.loop();
-      if ((haDiscTrigger || settings.data.haDiscovery) && measureJson(Json) > jsonSize)
+      if ((haDiscTrigger || settings.data.haDiscovery) && getJsonSize(Json) > jsonSize)
       {
         if (sendHaDiscovery())
         {
           haDiscTrigger = false;
-          jsonSize = measureJson(Json);
+          jsonSize = getJsonSize(Json);
         }
       }
     }
+#ifdef LORA_ENABLED
+    // If we are a Sender and WiFi is NOT connected, we still need to run the LoRa loop and Inverter Poll!
+    else if (settings.data.loraMode == 1) { // Sender
+         loraHandler.loop();
+         mppClient.loop();
+         // We cannot run mqttclient.loop() or sendHaDiscovery without WiFi
+         // Check if we need to send LoRa data
+         if (millis() - loraSendTimer > 60000) { // Send every 60s
+             // Update liveData from mppClient first? mppClient.loop() handles this and calls prozessData
+             // prozessData calls loraHandler.sendData(liveData);
+             // But prozessData might be gated by WiFi. Let's check prozessData logic.
+             // In prozessData:
+             // if (loraHandler.getMode() == LoraHandler::MODE_SENDER) { ... sendData ... }
+             // So we just need to ensure prozessData is CALLED.
+             // mppClient.callback(prozessData); ensures it is called when data is ready.
+         }
+    }
+#endif
   }
   if (restartNow && millis() >= (RestartTimer + 500))
   {
@@ -484,6 +592,21 @@ void loop()
 
 bool prozessData()
 {
+#ifdef LORA_ENABLED
+  // If we are a SENDER, we send data via LoRa instead of (or in addition to) MQTT
+  // But we want to send periodically.
+  if (loraHandler.getMode() == LoraHandler::MODE_SENDER) {
+      // Logic: If data is ready (this function is called when data is updated by PI_Serial), send it.
+      // But maybe we want to throttle it?
+      if (millis() - loraSendTimer > 60000) { // Send every 60s
+           loraHandler.sendData(liveData);
+           loraSendTimer = millis();
+      }
+      // If we only want LoRa and NOT WiFi/MQTT, we could return here.
+      // But the user might want both if they have WiFi at the inverter too.
+  }
+#endif
+
   if (millis() < (slowDownTimer + 1000) && mppClient.protocol == 0)
   {
     return true;
@@ -502,7 +625,11 @@ bool prozessData()
       tempSens.requestTemperatures();
     }
 #endif
-    sendtoMQTT(); // Update data to MQTT server if we should
+    // Only send to MQTT if we are NOT a pure LoRa sender without WiFi, OR if we are a Receiver.
+    // Actually, sender can also have WiFi. So let's always try to send if connected.
+    if (WiFi.status() == WL_CONNECTED) {
+        sendtoMQTT(); // Update data to MQTT server if we should
+    }
     mqtttimer = millis();
   }
 
@@ -513,11 +640,13 @@ bool prozessData()
 void getJsonData()
 {
   deviceJson[F("Device_name")] = settings.data.deviceName;
+#ifdef ESP8266
   deviceJson[F("ESP_VCC")] = ESP.getVcc() / 1000.0;
+  deviceJson[F("HEAP_Fragmentation")] = ESP.getHeapFragmentation();
+#endif
   deviceJson[F("Wifi_RSSI")] = WiFi.RSSI();
   deviceJson[F("sw_version")] = SOFTWARE_VERSION;
   deviceJson[F("Free_Heap")] = ESP.getFreeHeap();
-  deviceJson[F("HEAP_Fragmentation")] = ESP.getHeapFragmentation();
   //deviceJson[F("json_memory_usage")] = Json.memoryUsage();
   //deviceJson[F("json_capacity")] = Json.capacity();
   deviceJson[F("runtime")] = millis() / 1000;
@@ -644,7 +773,7 @@ bool sendtoMQTT()
   }
   else
   {
-    mqttclient.beginPublish(topicBuilder(buff, "Data"), measureJson(Json), false);
+    mqttclient.beginPublish(topicBuilder(buff, "Data"), getJsonSize(Json), false);
     serializeJson(Json, mqttclient);
     mqttclient.endPublish();
   }

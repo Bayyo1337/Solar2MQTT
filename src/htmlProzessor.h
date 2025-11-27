@@ -41,5 +41,14 @@ String htmlProcessor(const String &var)
         return (settings.data.httpPass);
     if (var == F("pre_hadiscovery"))
         return (settings.data.haDiscovery ? "checked" : "");
+
+    // LoRa Processors
+    if (var == F("pre_lora_off"))
+        return (settings.data.loraMode == 0 ? "selected" : "");
+    if (var == F("pre_lora_sender"))
+        return (settings.data.loraMode == 1 ? "selected" : "");
+    if (var == F("pre_lora_receiver"))
+        return (settings.data.loraMode == 2 ? "selected" : "");
+
     return String();
 }
