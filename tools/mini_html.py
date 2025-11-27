@@ -3,18 +3,16 @@ import os
 import glob
 from pathlib import Path
 import sys
-import pip
+import subprocess
 
 def install(package):
-    if hasattr(pip, 'main'):
-        pip.main(['install', package])
-    else:
-        pip._internal.main(['install', package])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 
 try:
     import minify_html
 except ImportError:
     install('minify_html')
+    import minify_html
 
 filePath = 'src/webpages/'
 try:

@@ -44,6 +44,17 @@
         <input type="text" class="form-control" aria-describedby="mqtttrigerdesc" id="mqtttrigger" maxlength="80"
             name="post_mqtttrigger" value="%pre_mqtt_mqtttrigger%" onkeyup="this.value=this.value.replace(/\s+/g,'_');">
     </div>
+
+    <!-- LoRa Mode Selection -->
+    <div class="input-group mb-2">
+        <span class="input-group-text w-50" id="loramodedesc">LoRa Mode</span>
+        <select class="form-select" aria-describedby="loramodedesc" id="loramode" name="post_loramode">
+            <option value="0" %pre_lora_off%>Off</option>
+            <option value="1" %pre_lora_sender%>Sender (Inverter)</option>
+            <option value="2" %pre_lora_receiver%>Receiver (Gateway)</option>
+        </select>
+    </div>
+
     <div class="input-group mb-2">
         <span class="input-group-text w-50" id="mqttjsondesc">MQTT Json Style</span>
         <div class="form-switch form-control mqtt-settings-switch" style="width:50%%; text-align: center;">

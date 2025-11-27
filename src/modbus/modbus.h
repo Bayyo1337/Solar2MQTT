@@ -1,4 +1,3 @@
-#include "SoftwareSerial.h"
 #ifndef MODBUS_H
 #define MODBUS_H
 
@@ -8,6 +7,12 @@
 extern JsonObject deviceJson;
 extern JsonObject staticData;
 extern JsonObject liveData;
+
+#ifdef ESP8266
+#include "SoftwareSerial.h"
+#else
+#include <HardwareSerial.h>
+#endif
 
 #define RS485_DIR_PIN 14 // D5
 #define RS485_ESP01_DIR_PIN 0
@@ -40,7 +45,12 @@ public:
     bool connection = false;
     modbus_register_info_t live_info;
     modbus_register_info_t static_info;
+
+#ifdef ESP8266
     MODBUS(SoftwareSerial *port);
+#else
+    MODBUS(HardwareSerial *port);
+#endif
 
     /**
      * @brief Initializes this driver
@@ -107,7 +117,11 @@ private:
      * @brief Serial interface used for communication
      * @details This is set in the constructor
      */
+#ifdef ESP8266
     SoftwareSerial *my_serialIntf;
+#else
+    HardwareSerial *my_serialIntf;
+#endif
 
     ModbusMaster mb;
 };
