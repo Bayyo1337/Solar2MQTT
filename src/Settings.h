@@ -7,7 +7,7 @@
 class Settings
 {
   // change eeprom config version ONLY when new parameter is added and need reset the parameter
-  unsigned int configVersion = 11;
+  unsigned int configVersion = 12;
 
 public:
   String deviceNameStr;
@@ -28,6 +28,7 @@ public:
     char httpUser[40];           // http basic auth username
     char httpPass[40];           // http basic auth password
     bool haDiscovery;            // HomeAssistant Discovery switch
+    uint8_t loraMode;            // 0: Off, 1: Sender, 2: Receiver
   } data;
 
   void load()
@@ -117,6 +118,10 @@ private:
     {
       data.haDiscovery = false;
     }
+    if (data.loraMode > 2)
+    {
+        data.loraMode = 0;
+    }
   }
   void coVersCheck()
   {
@@ -137,6 +142,7 @@ private:
       strcpy(data.httpUser, "");
       strcpy(data.httpPass, "");
       data.haDiscovery = false;
+      data.loraMode = 0;
       save();
       load();
     }

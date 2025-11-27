@@ -10,7 +10,11 @@ unsigned int dir_pin;
 //  Public Functions
 //----------------------------------------------------------------------
 
+#ifdef ESP8266
 MODBUS::MODBUS(SoftwareSerial *port)
+#else
+MODBUS::MODBUS(HardwareSerial *port)
+#endif
 {
     my_serialIntf = port;
     dir_pin = RS485_DIR_PIN;
@@ -40,7 +44,11 @@ bool MODBUS::Init()
         return false;
     }
     this->my_serialIntf->setTimeout(2000);
+#ifdef ESP8266
     this->my_serialIntf->begin(RS485_BAUDRATE, SWSERIAL_8N1);
+#else
+    this->my_serialIntf->begin(RS485_BAUDRATE, SERIAL_8N1);
+#endif
 
     // Init in receive mode
     pinMode(dir_pin, OUTPUT);

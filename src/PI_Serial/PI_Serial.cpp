@@ -24,7 +24,15 @@ extern void writeLog(const char *format, ...);
 
 PI_Serial::PI_Serial(int rx, int tx)
 {
+#ifdef ESP8266
     this->my_serialIntf = new SoftwareSerial(rx, tx, false); // init pins
+#else
+    // On ESP32, use Serial1 or Serial2. Using Serial2 by default if available or Serial1.
+    // However, HardwareSerial(2) is common.
+    this->my_serialIntf = new HardwareSerial(2);
+    _rx = rx;
+    _tx = tx;
+#endif
 }
 
 bool PI_Serial::Init()
@@ -45,8 +53,14 @@ bool PI_Serial::Init()
         return true;
     }
     this->my_serialIntf->setTimeout(500);
+#ifdef ESP8266
     this->my_serialIntf->enableRxGPIOPullUp(true);
     this->my_serialIntf->begin(serialIntfBaud, SWSERIAL_8N1);
+#else
+    // HardwareSerial begin(baud, config, rx, tx)
+    this->my_serialIntf->begin(serialIntfBaud, SERIAL_8N1, _rx, _tx);
+#endif
+
     return true;
 }
 
@@ -171,7 +185,11 @@ void PI_Serial::autoDetect() // function for autodetect the inverter type
 
         startChar = "(";
         serialIntfBaud = 2400;
+#ifdef ESP8266
         this->my_serialIntf->begin(serialIntfBaud, SWSERIAL_8N1);
+#else
+        this->my_serialIntf->begin(serialIntfBaud, SERIAL_8N1, _rx, _tx);
+#endif
         String qpi = this->requestData("QPI");
         writeLog("QPI:\t\t%s (Length: %d)", qpi, qpi.length());
         if (qpi != "" && qpi.substring(0, 2) == "PI")
@@ -182,7 +200,11 @@ void PI_Serial::autoDetect() // function for autodetect the inverter type
             break;
         }
         startChar = "^Dxxx";
+#ifdef ESP8266
         this->my_serialIntf->begin(serialIntfBaud, SWSERIAL_8N1);
+#else
+        this->my_serialIntf->begin(serialIntfBaud, SERIAL_8N1, _rx, _tx);
+#endif
         String P005PI = this->requestData("^P005PI");
         writeLog("^P005PI:\t\t%s (Length: %d)", P005PI, P005PI.length());
         if (P005PI != "" && P005PI == "18")
@@ -192,9 +214,16 @@ void PI_Serial::autoDetect() // function for autodetect the inverter type
             protocol = PI18;
             break;
         }
+#ifdef ESP8266
         this->my_serialIntf->end();
+#else
+        // HardwareSerial doesn't always need 'end', but good practice to close if reopening with diff baud
+        // However, on ESP32, begin() reconfigures it.
+#endif
     }
+#ifdef ESP8266
     this->my_serialIntf->end();
+#endif
     if (protocol == NoD)
     {
         modbus = new MODBUS(this->my_serialIntf);
@@ -244,7 +273,9 @@ String PI_Serial::requestData(String command)
     this->my_serialIntf->flush();
 
     // 2. Receive Data (Raw Read Loop)
+#ifdef ESP8266
     this->my_serialIntf->enableTx(true);
+#endif
     delay(50); 
 
     String rawData = "";
@@ -274,7 +305,9 @@ String PI_Serial::requestData(String command)
         rawData.remove(rawData.length() - 1);
     }
     
+#ifdef ESP8266
     this->my_serialIntf->enableTx(false);
+#endif
     commandBuffer = rawData;
 
     // 3. Validation

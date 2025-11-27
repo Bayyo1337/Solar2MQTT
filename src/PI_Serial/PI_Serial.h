@@ -1,11 +1,16 @@
-#include "SoftwareSerial.h"
 #ifndef PI_SERIAL_H
 #define PI_SERIAL_H
-#include "vector"
-#include <ArduinoJson.h>
-#include <modbus/modbus.h>
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
+#include "vector"
+
+// Forward declaration of MODBUS to avoid circular dependency issues or include it here if needed
+#include <modbus/modbus.h>
+
+#ifdef ESP8266
+#include "SoftwareSerial.h"
+#endif
 
 extern JsonObject deviceJson;
 extern JsonObject staticData;
@@ -145,7 +150,13 @@ private:
      * @brief Serial interface used for communication
      * @details This is set in the constructor
      */
+#ifdef ESP8266
     SoftwareSerial *my_serialIntf;
+#else
+    HardwareSerial *my_serialIntf;
+    int _rx, _tx;
+#endif
+
     // dynamic requests
     bool PIXX_Q1();
     bool PIXX_QPIGS();
